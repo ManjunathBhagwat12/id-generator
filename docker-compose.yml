@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: idgen
+      POSTGRES_USER: idgen
+      POSTGRES_PASSWORD: idgen
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Published for local tools (pgAdmin, psql) on 127.0.0.1 only. 5433 avoids clashing with a locally
+    # installed PostgreSQL on 5432; override with POSTGRES_HOST_PORT.
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idgen -d idgen"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/idgen
+      DB_USER: idgen
+      DB_PASSWORD: idgen
+      TEMPLATES_PATH: /app/data/templates.json
+      CITIES_PATH: /app/data/cities.csv
+      # Initial admin (created only if the username does not exist yet). Override via shell or a .env file;
+      # the defaults below are for LOCAL DEVELOPMENT ONLY. See .env.example.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin12345}
+      # Set to true when the app is served over HTTPS.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # true = templates whose named counter has no entry in templates.json "counters" are rejected (422);
+      # false = such counters start at 1. See README "Named counter without configuration".
+      NAMED_COUNTERS_REQUIRE_CONFIG: ${NAMED_COUNTERS_REQUIRE_CONFIG:-false}
+      # true = ID issuance requires an X-API-Key (or an admin session); false keeps the public demo open.
+      API_KEY_REQUIRED: ${API_KEY_REQUIRED:-false}
+    volumes:
+      - ./data:/app/data:ro   # supplied files are mounted read-only configuration, never copied or edited
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8080'"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: on-failure
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:
